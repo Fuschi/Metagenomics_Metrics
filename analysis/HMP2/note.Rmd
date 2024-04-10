@@ -369,6 +369,22 @@ dev.off()
 ```
 
 
+## Merge the figures without E
 
+```{r}
+p1 <- ggpubr::ggarrange(p.G1 + theme(plot.margin=margin(b=50)), p.box.ent, ncol=2, labels=c("A","B"), 
+                        common.legend=T, legend="top", widths=c(.2,.8))
+
+p2 <- ggpubr::ggarrange(p.nmds.bray, p.nmds.aitc, ncol=2, labels=c("C","D"))
+
+pall <- ggpubr::ggarrange(p1, p2, ncol=1,
+                          heights=c(.4, 0.6))
+```
+
+```{r}
+png(filename="HMP2_nmds_metrics_noE.png", width=4000, height=3500, res=300)
+pall
+dev.off()
+```
 
 

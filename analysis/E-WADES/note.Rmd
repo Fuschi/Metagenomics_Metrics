@@ -199,7 +199,11 @@ p2 <- ggpubr::ggarrange(p.pcoa.bray, p.pcoa.aitc, ncol=2, labels=c("C","D"))
 
 pall <- ggpubr::ggarrange(p1, p2, 
                           ncol=1, labels=c("",""),
-                          heights=c(0.5,0.5))
+                          heights=c(0.4,0.6))
+
+png(filename="E-WADES_pcoa_metrics.png", width=4000, height=3500, res=300)
+pall
+dev.off()
 
 pdf(file="E-WADES_pcoa_metrics.pdf", width=11, height=11)
 pall
