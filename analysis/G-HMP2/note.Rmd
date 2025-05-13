@@ -1,0 +1,438 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r, message=FALSE}
+library(tidyverse)
+```
+
+```{r, message=FALSE}
+otu_abund <- read_csv("../../data/HMP2/abundance_HMP2.csv") %>%
+  column_to_rownames("...1")
+meta_sample <- read_csv("../../data/HMP2/meta_samples_HMP2.csv") %>%
+  column_to_rownames("...1") %>% select(SubjectID) %>%
+  rownames_to_column("sample")
+otu_taxon <- read_csv("../../data/HMP2/taxonomy_HMP2.csv") %>%
+  column_to_rownames("...1")
+```
+
+```{r}
+otu_taxon <- otu_taxon %>%
+  mutate(genus = str_replace_all(genus, "_", " "))
+```
+
+```{r}
+all(rownames(otu_abund)==meta_sample$sample) &
+all(colnames(otu_abund)==rownames(otu_taxon))
+```
+
+```{r}
+# choose only sample with at least 25 sample to improve the clarity 
+# in the results
+subject_preserved <- meta_sample$SubjectID %>% table %>%
+  subset(.>=25) %>% names
+
+otu_abund_subset <- otu_abund[meta_sample$SubjectID %in% subject_preserved, ]
+meta_sample_subset <- meta_sample[meta_sample$SubjectID %in% subject_preserved, ]
+```
+
+```{r}
+genus_rel_abund <- otu_abund_subset %>% rownames_to_column("sample") %>%
+  pivot_longer(-sample, names_to="otu", values_to="count") %>%
+  left_join(otu_taxon%>%select(genus:otu), by="otu") %>%
+  reframe(count=sum(count), .by=c("sample","genus")) %>%
+  pivot_wider(names_from=genus, values_from=count) %>%
+  column_to_rownames("sample")
+genus_rel_abund <- genus_rel_abund / rowSums(genus_rel_abund)
+```
+
+```{r}
+# Useful function
+prevalence <- function(X){colSums(X>0)/nrow(X)}
+```
+
+```{r}
+prevalence(genus_rel_abund) %>% enframe(value = "prevalence") %>%
+  ggplot(aes(x = prevalence)) +
+  geom_histogram(bins = 11, fill = "lightblue", color = "darkblue") +
+  scale_x_continuous(breaks = seq(0,1,.1))
+```
+
+
+```{r}
+# Remove the too rare genera
+genus_rel_abund_filt <- genus_rel_abund[,prevalence(genus_rel_abund)>=.10]
+```
+
+```{r}
+subset_genera <- colSums(genus_rel_abund_filt) %>% sort %>% tail(10) %>% names
+```
+
+```{r}
+set.seed(42)
+colorGenera <- rownames(qualpalr::qualpal(n = length(subset_genera), 
+                                          colorspace = list(h = c(0,360),
+                                                            s = c(.25,.6),
+                                                            l = c(.45,.85)))$RGB) %>%
+  stats::setNames(subset_genera)
+colorGenera["Bacteroides"] <- "#FF0000"
+colorGenera["Prevotella"] <- "#00FF00"
+colorGenera <- c(colorGenera, "Other"="#A6A6A6")
+```
+
+```{r}
+data_composition <- genus_rel_abund_filt %>%
+  rownames_to_column("sample") %>%
+  arrange(desc(Bacteroides - Prevotella)) %>%
+  mutate(sample_fct = fct_inorder(sample)) %>%
+  pivot_longer(-c(sample, sample_fct), names_to="genus", values_to="relative", 
+               names_repair = "check_unique") %>%
+  mutate(genus = if_else(genus %in% subset_genera, genus, "Other")) %>%
+  reframe(relative=sum(relative), .by=c("sample", "sample_fct","genus")) %>%
+  left_join(meta_sample_subset, by = "sample")
+
+p.composition <- data_composition %>%
+  ggplot(aes(x=sample_fct,y=relative,fill=genus)) +
+    geom_bar(stat="identity") +
+    scale_fill_manual(name = "Genus",
+                      breaks=names(colorGenera),
+                      values=colorGenera,
+                      labels = function(x) paste0("<i>", x, "</i>")) +
+    theme_minimal() +
+    theme(legend.position="bottom",
+          axis.text.x=element_blank(),
+          axis.ticks.x=element_blank()) +
+  xlab("Samples") +
+  ylab("Genera Composition") +
+  guides(fill=guide_legend(ncol=5)) +
+  theme(legend.text = ggtext::element_markdown()) +
+  # Colored tile at bottom of each bar
+  ggnewscale::new_scale_fill() +
+  geom_tile(data = data_composition,
+            aes(x = sample, y = -0.03, fill = SubjectID), 
+            height = 0.03, width = 1, inherit.aes = FALSE) 
+p.composition
+```
+
+
+## Dimensionality Reduction
+
+```{r}
+# Calculate the distance matrix with bray-curtis and aitchison
+dist.bray <- vegan::vegdist(genus_rel_abund,"bray") %>% as.dist
+dist.aitc <- genus_rel_abund_filt %>% 
+  zCompositions::cmultRepl(z.warning = 1, z.delete = F) %>%
+  vegan::vegdist(method = "aitchison")
+```
+
+## PCOA
+
+```{r}
+pcoa.bray <- stats::cmdscale(dist.bray, eig=T, add=T)
+pcoa.aitc <- stats::cmdscale(dist.aitc, eig=T, add=T)
+```
+
+## Plot with Aitchison Distance
+
+```{r}
+centroids.pcoa.aitc <- pcoa.aitc$points %>% as_tibble %>%
+  cbind("Subjects"=meta_sample_subset$SubjectID) %>%
+  reframe(V1=mean(V1), 
+          V2=mean(V2),
+          .by=Subjects)
+
+varExplained_aitc <- 100 * (pcoa.aitc$eig / sum(pcoa.aitc$eig)) %>%
+  round(2)
+
+p.pcoa.aitc <-  pcoa.aitc$points %>% as_tibble %>% 
+  cbind("Subjects"=meta_sample_subset$SubjectID) %>%
+  ggplot(aes(x=V1,y=V2, color=Subjects)) +
+  geom_point(size=3) +
+  stat_ellipse() +
+  geom_point(data=centroids.pcoa.aitc, shape=21, size=5, color="black",
+             aes(fill=Subjects)) +
+  theme_minimal() +
+  xlab(paste("PCoA1 (~",varExplained_aitc[1],"%)", sep="")) +
+  ylab(paste("PCoA1 (~",varExplained_aitc[2],"%)", sep="")) +
+  theme(legend.position="bottom")
+
+p.pcoa.aitc
+```
+
+```{r}
+varExplained_bray <- 100 * (pcoa.bray$eig / sum(pcoa.bray$eig)) %>%
+  round(2)
+
+p.pcoa.bray <- pcoa.bray$points %>% as_tibble %>% 
+  cbind("Bacteroides"=genus_rel_abund_filt[,"Bacteroides"]) %>%
+  cbind("Prevotella"=genus_rel_abund_filt[,"Prevotella"]) %>%
+  as_tibble() %>% mutate(sample=meta_sample_subset$sample) %>%
+  left_join(meta_sample_subset, by="sample") %>%
+  #mutate(enterotype=as.factor(enterotype)) %>%
+  #rename(Enterotype = enterotype) %>%
+  mutate(color_metric=Bacteroides-Prevotella) %>%
+  mutate(color_metric_2=rgb(Bacteroides,Prevotella,0)) %>%
+  ggplot(aes(x=V1, y=V2)) +
+    geom_point(aes(color=color_metric_2), size=3) +
+    scale_color_identity() +
+    theme_minimal() +
+    theme(legend.position="bottom",
+          legend.justification=1) +
+    xlab(paste("PCoA1 (~",varExplained_bray[1],"%)", sep="")) +
+    ylab(paste("PCoA1 (~",varExplained_bray[2],"%)", sep="")) +
+    guides(shape=guide_legend(label.position="top", title.position="top",
+                              title.hjust=.5)) +
+    ggnewscale::new_scale_color() +
+      geom_point(aes(x = V1, y = V2, color = Prevotella), alpha = 0) +
+      scale_color_gradient(name="Prevotella", low="black", high="green", 
+                           limits=c(0,.75)) +
+      theme(legend.position="bottom") +
+    ggnewscale::new_scale_color() +
+      geom_point(aes(x = V1, y = V2, color = Bacteroides), alpha = 0) +
+      scale_color_gradient(name="Bacteroides", low="black", high="red", 
+                           limits=c(0,.75)) +
+      theme(legend.position = "bottom",
+            legend.justification=0)
+
+p.pcoa.bray
+```
+
+
+## Merge the figures
+
+```{r, fig.width=13.3, fig.height=10}
+p1 <- p.composition 
+
+p2 <- ggpubr::ggarrange(p.pcoa.bray + theme(legend.margin = margin(t = 20, b = 10)),
+                        p.pcoa.aitc, ncol=2, labels=c("B","C"))
+
+pall <- ggpubr::ggarrange(p1, p2, 
+                          ncol=1, labels=c("A",""),
+                          heights=c(0.4,0.6))
+pall
+```
+
+
+```{r}
+png(filename="HMP2_pcoa_metrics.png", width=8000, height=6000, res=600)
+pall
+dev.off()
+
+pdf(file="HMP2_pcoa_metrics.pdf", width=13.3, height=10)
+pall
+dev.off()
+```
+
+## Adonis 2
+
+```{r}
+meta_sample_filt <- meta_sample %>%
+  filter(sample %in% rownames(genus_rel_abund_filt)) 
+```
+
+```{r}
+mat <- as.matrix(genus_rel_abund_filt[, c("Bacteroides", "Prevotella")])
+vegan::adonis2(dist.aitc ~ SubjectID + mat,
+               data = meta_sample_filt, 
+               permutations = 10^3, by = "margin")
+```
+
+
+```{r}
+vegan::adonis2(dist.bray ~ SubjectID + mat, data = meta_sample_filt, 
+               permutations = 10^3, by = "margin")
+```
+
+## UMAP
+
+```{r,message=FALSE, warning=FALSE}
+library(uwot)
+set.seed(42)
+umap.bray <- uwot::umap(as.dist(dist.bray), min_dist = .5)
+
+set.seed(42)
+umap.aitc <- uwot::umap(as.dist(dist.aitc), min_dist = .5)
+```
+
+```{r}
+p.umap.aitc <- umap.aitc %>% as_tibble %>% 
+  cbind("Subjects"=meta_sample_subset$SubjectID) %>%
+  ggplot(aes(x=V1,y=V2, fill=Subjects)) +
+  geom_point(size=3, alpha =.75, shape = 21) +
+  theme_minimal() +
+  xlab("UMAP-1") + ylab("UMAP-2") +
+  theme(legend.position="bottom")
+```
+
+```{r}
+p.umap.bray <- umap.bray %>% as_tibble %>% 
+    cbind("Bacteroides"=genus_rel_abund_filt[,"Bacteroides"]) %>%
+    cbind("Prevotella"=genus_rel_abund_filt[,"Prevotella"]) %>%
+    as_tibble() %>% mutate(sample=meta_sample_subset$sample) %>%
+    left_join(meta_sample_subset, by="sample") %>%
+    mutate(color_metric=Bacteroides-Prevotella) %>%
+    mutate(color_metric_2=rgb(Bacteroides,Prevotella,0)) %>%
+    ggplot(aes(x=V1, y=V2)) +
+      geom_point(aes(color=color_metric_2), size=3) +
+      scale_color_identity() +
+      theme_minimal() +
+      theme(legend.position="bottom",
+            legend.justification=1) +
+      xlab("UMAP-1") + ylab("UMAP-2") +
+      guides(shape=guide_legend(label.position="top", title.position="top",
+                                title.hjust=.5)) +
+      ggnewscale::new_scale_color() +
+        geom_point(aes(x = V1, y = V2, color = Prevotella), alpha = 0) +
+        scale_color_gradient(name="Prevotella", low="black", high="green", 
+                             limits=c(0,.75)) +
+        theme(legend.position="bottom") +
+      ggnewscale::new_scale_color() +
+        geom_point(aes(x = V1, y = V2, color = Bacteroides), alpha = 0) +
+        scale_color_gradient(name="Bacteroides", low="black", high="red", 
+                             limits=c(0,.75)) +
+        theme(legend.position = "bottom",
+              legend.justification=0)
+```
+
+```{r, fig.width=10, fig.height=6}
+p.umap <- ggpubr::ggarrange(
+  p.umap.bray + theme(plot.margin = margin(b = 15, t = 5)) + ggtitle("G-HMP2 Bray-Curtis"), 
+  p.umap.aitc + ggtitle("G-HMP2 Aitchison"), 
+  ncol = 2
+)
+p.umap
+```
+
+```{r}
+png(filename = "../Supplementary/HMP2_umap_metrics.png", width = 3000, height = 1800, res = 300)
+p.umap
+dev.off()
+```
+
+
+## Other Metrics
+
+```{r, message=FALSE}
+pcoa.JSD <- philentropy::distance(genus_rel_abund_filt, method = "jensen-shannon") %>%
+  stats::cmdscale(eig=T, add=T)
+pcoa.CAN <- vegan::vegdist(genus_rel_abund_filt, method = "canberra") %>%
+  stats::cmdscale(eig=T, add=T)
+pcoa.HEL <- vegan::vegdist(genus_rel_abund_filt, method = "hellinger") %>%
+  stats::cmdscale(eig=T, add=T)
+```
+
+```{r}
+plot.PCOA.ent <- function(pcoa, meta_sample_filt, genus_rel_filt){
+  
+  varExplained_bray <- round(100 * (pcoa$eig / sum(pcoa$eig)))
+
+  p <- pcoa$points %>% as_tibble %>% 
+    cbind("Bacteroides"=genus_rel_abund_filt[,"Bacteroides"]) %>%
+    cbind("Prevotella"=genus_rel_abund_filt[,"Prevotella"]) %>%
+    as_tibble() %>% mutate(sample=meta_sample_subset$sample) %>%
+    left_join(meta_sample_subset, by="sample") %>%
+    mutate(color_metric=Bacteroides-Prevotella) %>%
+    mutate(color_metric_2=rgb(Bacteroides,Prevotella,0)) %>%
+    ggplot(aes(x=V1, y=V2)) +
+      geom_point(aes(color=color_metric_2), size=3) +
+      scale_color_identity() +
+      theme_minimal() +
+      theme(legend.position="bottom",
+            legend.justification=1) +
+      xlab(paste("PCoA1 (~",varExplained_bray[1],"%)", sep="")) +
+      ylab(paste("PCoA1 (~",varExplained_bray[2],"%)", sep="")) +
+      guides(shape=guide_legend(label.position="top", title.position="top",
+                                title.hjust=.5)) +
+      ggnewscale::new_scale_color() +
+        geom_point(aes(x = V1, y = V2, color = Prevotella), alpha = 0) +
+        scale_color_gradient(name="Prevotella", low="black", high="green", 
+                             limits=c(0,.75)) +
+        theme(legend.position="bottom") +
+      ggnewscale::new_scale_color() +
+        geom_point(aes(x = V1, y = V2, color = Bacteroides), alpha = 0) +
+        scale_color_gradient(name="Bacteroides", low="black", high="red", 
+                             limits=c(0,.75)) +
+        theme(legend.position = "bottom",
+              legend.justification=0)
+
+  
+  return(p)
+}
+```
+
+```{r}
+plot.PCOA.sub <- function(pcoa, meta_sample_filt, genus_rel_filt){
+  
+  varExplained_aitc <- 100 * (pcoa$eig / sum(pcoa$eig)) %>%
+  round(2)
+
+  p <- pcoa$points %>% as_tibble %>% 
+    cbind("Subjects"=meta_sample_filt$SubjectID) %>%
+    ggplot(aes(x=V1,y=V2, color=Subjects)) +
+    geom_point(size=3) +
+    theme_minimal() +
+    xlab(paste("PCoA1 (~",varExplained_aitc[1],"%)", sep="")) +
+    ylab(paste("PCoA1 (~",varExplained_aitc[2],"%)", sep="")) +
+    theme(legend.position="none")
+  
+  return(p)
+}
+```
+
+
+```{r}
+p.JSD.ent <- plot.PCOA.ent(pcoa.JSD, meta_sample_filt, genus_rel_abund_filt)
+p.CAN.ent <- plot.PCOA.ent(pcoa.CAN, meta_sample_filt, genus_rel_abund_filt)
+p.HEL.ent <- plot.PCOA.ent(pcoa.HEL, meta_sample_filt, genus_rel_abund_filt)
+p.AIT.ent <- plot.PCOA.ent(pcoa.aitc, meta_sample_filt, genus_rel_abund_filt)
+p.BRA.ent <- plot.PCOA.ent(pcoa.bray, meta_sample_filt, genus_rel_abund_filt)
+```
+
+```{r}
+p.JSD.sub <- plot.PCOA.sub(pcoa.JSD, meta_sample_filt, genus_rel_abund_filt)
+p.CAN.sub <- plot.PCOA.sub(pcoa.CAN, meta_sample_filt, genus_rel_abund_filt)
+p.HEL.sub <- plot.PCOA.sub(pcoa.HEL, meta_sample_filt, genus_rel_abund_filt)
+p.AIT.sub <- plot.PCOA.sub(pcoa.aitc, meta_sample_filt, genus_rel_abund_filt)
+p.BRA.sub <- plot.PCOA.sub(pcoa.bray, meta_sample_filt, genus_rel_abund_filt)
+```
+
+
+```{r, fig.width=20, fig.height=4}
+p.ent <- ggpubr::ggarrange(
+  p.JSD.ent + ggtitle("jensen-shannon bacteroides/prevotella"), 
+  p.CAN.ent + ggtitle("canberra bacteroides/prevotella"), 
+  p.HEL.ent + ggtitle("hellinger bacteroides/prevotella"),
+  p.BRA.ent + ggtitle("bray-curtis bacteroides/prevotella"),
+  p.AIT.ent + ggtitle("aitchison bacteroides/prevotella"), 
+  ncol = 5, legend = "none"
+)
+```
+
+```{r, fig.width=20, fig.height=4}
+p.sub <- ggpubr::ggarrange(
+  p.JSD.sub + ggtitle("jensen-shannon subjects"), 
+  p.CAN.sub + ggtitle("canberra subjects"), 
+  p.HEL.sub + ggtitle("hellinger subjects"),
+  p.BRA.sub + ggtitle("bray-curtis subjects"),
+  p.AIT.sub + ggtitle("aitchison subjects"), 
+  ncol = 5, common.legend = T, legend = "none"
+)
+```
+
+```{r, fig.width=20, fig.height=8}
+pall <- ggpubr::ggarrange(p.ent, p.sub, nrow = 2) + theme(legend.position = "none")
+pall
+```
+
+```{r}
+png("../Supplementary/HMP2_pcoa_more_metrics.png", width = 6000, height = 2400, res = 300)
+pall
+dev.off()
+```
+
+
+
+
+
+

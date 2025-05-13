@@ -31,100 +31,76 @@ meta_sample <- meta_sample[meta_sample$Replicate_Bigger,]
 ```
 
 
-## Aggregate to Family Rank
+## Aggregate to Genus Rank
 
 ```{r}
-family_abund <- abund %>% rownames_to_column("sample") %>%
+genus_abund <- abund %>% rownames_to_column("sample") %>%
   pivot_longer(-sample, names_to="Species", values_to="count") %>%
-  left_join(taxon%>%rownames_to_column("SpeciesID") %>% select(SpeciesID,Family) %>%
+  left_join(taxon%>%rownames_to_column("SpeciesID") %>% select(SpeciesID,Genus) %>%
               rename(Species=SpeciesID), by="Species") %>%
-  reframe(count=sum(count), .by=c("sample","Family")) %>%
-  pivot_wider(names_from=Family, values_from=count) %>%
+  reframe(count=sum(count), .by=c("sample","Genus")) %>%
+  pivot_wider(names_from=Genus, values_from=count) %>%
   column_to_rownames("sample")
 
-family_rel_abund <- data.frame(family_abund/rowSums(family_abund))
+genus_rel_abund <- data.frame(genus_abund/rowSums(genus_abund))
 ```
 
 ```{r}
-subset_family <- colSums(family_abund) %>% sort %>% tail(10) %>% names
+subset_genus <- colSums(genus_abund) %>% sort %>% tail(10) %>% names
 ```
 
 ```{r}
-set.seed(13)
-color_family <- randomcoloR::distinctColorPalette(length(subset_family), runTsne=T) %>%
-  stats::setNames(subset_family)
-color_family <- c(color_family, "Other"="#A6A6A6")
+color_genus <- rownames(qualpalr::qualpal(n = length(subset_genus), 
+                                          colorspace = list(h = c(0,360),
+                                                            s = c(.25,.6),
+                                                            l = c(.45,.85)))$RGB) %>%
+  stats::setNames(subset_genus)
+color_genus <- c(color_genus, "Other"="#A6A6A6")
+color_genus
 ```
 
 ```{r}
-p.composition <- family_rel_abund %>%
+data_composition <- genus_rel_abund %>%
   rownames_to_column("sample") %>%
-  pivot_longer(-sample, names_to="family", values_to="relative") %>%
-  mutate(family = if_else(family %in% subset_family, family, "Other")) %>%
+  pivot_longer(-sample, names_to="genus", values_to="relative") %>%
+  mutate(genus = if_else(genus %in% subset_genus, genus, "Other")) %>%
   left_join(meta_sample, by="sample") %>%
   filter(Replicate_Bigger) %>%
-  reframe(relative=sum(relative), .by=c("sample","family","Site")) %>%
-  ggplot(aes(x=sample,y=relative,fill=family)) +
+  reframe(relative=sum(relative), .by=c("sample","genus","Site")) %>%
+  group_by(sample) %>%
+  mutate(Pseudomonas_E_rel = sum(relative[genus == "Pseudomonas_E"])) %>%
+  ungroup() %>%
+  arrange(Pseudomonas_E_rel) %>%
+  mutate(sample_fct = factor(sample, levels = unique(sample)))
+
+p.composition <- data_composition %>%
+  ggplot(aes(x=sample_fct,y=relative,fill=genus)) +
     geom_bar(stat="identity", color=rgb(0,0,0,.25), linewidth=.25) +
-    scale_fill_manual(breaks=names(color_family),
-                      values=color_family) +
+    scale_fill_manual(values=color_genus,
+                      labels = function(x) paste0("<i>", x, "</i>")) +
     theme_minimal() +
     theme(legend.position="bottom",
           axis.text.x=element_blank(),
-          axis.ticks.x=element_blank()) +
-  ylab("Family\nComposition") +
-  facet_wrap(~Site, scales="free_x", ncol=7) +
-  theme(strip.background = element_blank(),
-        strip.text.x = element_blank()) +
-  xlab("Date") +
-  labs(fill="Family\nClassification")
+          axis.ticks.x=element_blank(),
+          legend.text = ggtext::element_markdown()) +
+  ylab("Genus\nComposition") +
+  labs(fill="Genus") +
+  xlab("Samples") +
+  ggnewscale::new_scale_fill() +
+  geom_tile(data = data_composition,
+            aes(x = sample, y = -0.03, fill = Site), 
+            height = 0.03, width = 1, inherit.aes = FALSE) 
 p.composition
 ```
-
-## Alpha Diversity
-
-```{r}
-df.alpha <- abund[meta_sample$Replicate_Bigger,] %>%
-  apply(1,vegan::diversity) %>%
-  enframe(name="sample",value="shannon")
-
-p.alpha <- df.alpha %>%
-  left_join(meta_sample, by="sample") %>%
-  ggplot(aes(x=Date,y=shannon, color=Site, group=Site)) +
-    geom_point() + geom_line() +
-    theme_minimal() +
-    theme(legend.position="bottom",
-          axis.text.x=element_blank(),
-          axis.ticks.x=element_blank()) +
-  ylab("Shannon\nDiversity") +
-  facet_wrap(~Site, scales="free_x", ncol=7) +
-  theme(axis.title.x=element_blank())
-p.alpha
-```
-
 
 ## Dimensionality Reduction
 
 ```{r}
-# Useful function
-
-zero_replacement <- function(X){
-  dl <- apply(X,1,\(x) .65*min(x[x>0]))
-  dl <- replicate(ncol(X),dl)
-  X <- X + dl*(X==0)
-  return(X)
-}
-
-clr <- function(X){
-  ref <- apply(X, 1, function(x) mean(log(x)) )
-  return(as.matrix(log(X) - ref))
-}
-```
-
-```{r}
 # Calculate the distance matrix with bray-curtis and aitchison
-dist.bray <- vegan::vegdist(abund,"bray") %>% as.dist
-dist.aitc <- abund %>% zero_replacement %>% clr %>% dist %>% as.dist
+dist.bray <- vegan::vegdist(abund, "bray") %>% as.dist
+dist.aitc <- abund %>% 
+  zCompositions::cmultRepl() %>%
+  vegan::vegdist(method = "aitchison") 
 ```
 
 ## PCOA
@@ -136,7 +112,7 @@ pcoa.aitc <- stats::cmdscale(dist.aitc, eig=T, add=T)
 
 ## Plot with Aitchison Distance
 
-```{r}
+```{r, warning=FALSE}
 centroids.pcoa.aitc <- pcoa.aitc$points %>% as_tibble %>%
   cbind("Site"=meta_sample$Site) %>%
   reframe(V1=mean(V1), 
@@ -155,10 +131,10 @@ p.pcoa.aitc <-  pcoa.aitc$points %>% as_tibble %>%
              aes(fill=Site)) +
   theme_minimal() +
   xlab(paste("PCoA1 (~",varExplained_aitc[1],"%)", sep="")) +
-  ylab(paste("PCoA1 (~",varExplained_aitc[2],"%)", sep="")) +
+  ylab(paste("PCoA2 (~",varExplained_aitc[2],"%)", sep="")) +
   theme(legend.position="bottom") +
   theme(axis.text=element_text(size=10),
-          axis.title=element_text(size=12))
+        axis.title=element_text(size=12))
 
 p.pcoa.aitc
 ```
@@ -168,47 +144,230 @@ varExplained_bray <- 100 * (pcoa.bray$eig / sum(pcoa.bray$eig)) %>%
   round(2)
 
 p.pcoa.bray <- pcoa.bray$points %>% as_tibble %>% 
-  as_tibble() %>% mutate(shannon=df.alpha$shannon) %>%
-  ggplot(aes(x=V1, y=V2, color=shannon)) +
-    geom_point(size=3) +
+  as_tibble() %>% mutate(Pseudomonas_E=genus_rel_abund[, "Pseudomonas_E"]) %>%
+  ggplot(aes(x=V1, y=V2, fill=Pseudomonas_E)) +
+    geom_point(size=4, shape = 21, color = "black") +
     theme_minimal() +
     xlab(paste("PCoA1 (~",varExplained_bray[1],"%)", sep="")) +
-    ylab(paste("PCoA1 (~",varExplained_bray[2],"%)", sep="")) +
-    scale_color_viridis_c(option = "C") +
+    ylab(paste("PCoA2 (~",varExplained_bray[2],"%)", sep="")) +
+    #scale_color_viridis_c(option = "C") +
+     scale_fill_gradient(
+      low = "#2C3E50",  
+      high = color_genus["Pseudomonas_E"]  # Same color associated to Pseudomonas_E genus
+    ) +
     theme(axis.text=element_text(size=10),
           axis.title=element_text(size=12)) +
     theme(legend.position="bottom") +
-    labs(color="Shannon\nDiversity")
+    labs(fill = expression("Relative Composition of "*italic("Pseudomonas_E")))
 p.pcoa.bray
 ```
 
 
 ## Merge the figures
 
-```{r}
-p1 <- ggpubr::ggarrange(p.alpha + theme(legend.position="none") +
-                          scale_y_continuous(breaks=c(2,4,6),
-                                             labels=c("2    ","4    ","6    ")),
-                        
-                        p.composition + guides(fill=guide_legend(ncol=6)), 
-                        
-                        ncol=1, heights=c(.3,.7),
-                        labels=c("A","B"))
+```{r, fig.width=13.3, fig.height=10}
+p1 <- p.composition + guides(fill=guide_legend(ncol=6))
 
-p2 <- ggpubr::ggarrange(p.pcoa.bray, p.pcoa.aitc, ncol=2, labels=c("C","D"))
+p2 <- ggpubr::ggarrange(p.pcoa.bray + theme(legend.margin = margin(t = 20, b = 10)),
+                        p.pcoa.aitc, ncol=2, labels=c("B","C"))
 
 pall <- ggpubr::ggarrange(p1, p2, 
-                          ncol=1, labels=c("",""),
+                          ncol=1, labels=c("A",""),
                           heights=c(0.4,0.6))
+pall
+```
 
-png(filename="E-WADES_pcoa_metrics.png", width=4000, height=3500, res=300)
+
+```{r}
+png(filename="E-WADES_pcoa_metrics.png", width=8000, height=6000, res=600)
 pall
 dev.off()
 
-pdf(file="E-WADES_pcoa_metrics.pdf", width=11, height=11)
+pdf(file="E-WADES_pcoa_metrics.pdf", width=13.3, height=10)
 pall
 dev.off()
 ```
 
+## Adonis 2
 
+```{r}
+meta_sample <- genus_rel_abund %>% as_tibble(rownames = "sample") %>%
+  select(sample, Pseudomonas_E) %>%
+  right_join(meta_sample, by = "sample") %>%
+  mutate(City = case_when(
+    str_detect(Site, "Copenaghen") ~ "Copenaghen",
+    TRUE ~ Site
+  ))
+```
+
+```{r}
+vegan::adonis2(dist.aitc ~ City + Pseudomonas_E, data = meta_sample, 
+               permutations = 10^3, by = "margin")
+```
+
+```{r}
+vegan::adonis2(dist.bray ~ City + Pseudomonas_E, data = meta_sample, 
+               permutations = 10^3, by = "margin")
+```
+
+
+## UMAP
+
+```{r,message=FALSE, warning=FALSE}
+library(uwot)
+set.seed(42)
+umap.bray <- uwot::umap(as.dist(dist.bray), min_dist = .5)
+
+set.seed(42)
+umap.aitc <- uwot::umap(as.dist(dist.aitc), min_dist = .5)
+```
+
+```{r}
+p.umap.aitc <- umap.aitc %>% as_tibble %>% 
+  cbind("Site"=meta_sample$Site) %>%
+  ggplot(aes(x=V1,y=V2, fill=Site)) +
+  geom_point(size=4, shape = 21, alpha = .75) +
+  theme_minimal() +
+  xlab("UMAP-1") + ylab("UMAP-2") +
+  theme(legend.position="bottom") +
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=12))
+
+p.umap.aitc
+```
+
+```{r}
+p.umap.bray <- umap.bray %>% as_tibble %>% 
+    mutate(Pseudomonas_E=genus_rel_abund[, "Pseudomonas_E"]) %>%
+    ggplot(aes(x=V1, y=V2, fill=Pseudomonas_E)) +
+    geom_point(size=4, shape = 21, color = "black") +
+    theme_minimal() +
+    xlab("UMAP-1") + ylab("UMAP-2") +
+    #scale_color_viridis_c(option = "C") +
+     scale_fill_gradient(
+      low = "#2C3E50",  
+      high = color_genus["Pseudomonas_E"]  # Same color associated to Pseudomonas_E genus
+    ) +
+    theme(axis.text=element_text(size=10),
+          axis.title=element_text(size=12)) +
+    theme(legend.position="bottom") +
+    labs(fill = expression("Relative Composition of "*italic("Pseudomonas_E")))
+```
+
+```{r, fig.width=10, fig.height=5}
+p.umap <- ggpubr::ggarrange(
+  p.umap.bray + theme(plot.margin = margin(b = 15, t = 5)) + ggtitle("E-WADES Bray-Curtis"), 
+  p.umap.aitc + ggtitle("E-WADES Aitchison"), 
+  ncol = 2
+)
+p.umap
+```
+
+```{r}
+png(filename = "../Supplementary/EWADES_umap_metrics.png", width = 3000, height = 1800, res = 300)
+p.umap
+dev.off()
+```
+
+## Review
+
+```{r}
+pcoa.JSD <- philentropy::distance(abund, method = "jensen-shannon") %>%
+  stats::cmdscale(eig=T, add=T)
+pcoa.CAN <- vegan::vegdist(abund, method = "canberra") %>%
+  stats::cmdscale(eig=T, add=T)
+pcoa.HEL <- vegan::vegdist(abund, method = "hellinger") %>%
+  stats::cmdscale(eig=T, add=T)
+```
+
+```{r}
+plot.PCOA.pseo <- function(pcoa, meta_sample, genus_abun){
+  
+  varExplained <- 100 * (pcoa$eig / sum(pcoa$eig)) %>%
+    round(2)
+
+  p <- pcoa$points %>% as_tibble %>% 
+    as_tibble() %>% mutate(Pseudomonas_E=genus_abun[, "Pseudomonas_E"]) %>%
+    ggplot(aes(x=V1, y=V2, color=Pseudomonas_E)) +
+    geom_point(size=2) +
+    theme_minimal() +
+    xlab(paste("PCoA1 (~",varExplained[1],"%)", sep="")) +
+    ylab(paste("PCoA2 (~",varExplained[2],"%)", sep="")) +
+    scale_fill_gradient(
+        low = "#2C3E50",  
+        high = color_genus["Pseudomonas_E"]  # Same color associated to Pseudomonas_E genus
+      ) +
+    theme(legend.position="none") 
+
+  return(p)
+}
+```
+
+```{r}
+plot.PCOA.city <- function(pcoa, meta_sample){
+  
+  varExplained_aitc <- 100 * (pcoa$eig / sum(pcoa$eig)) %>%
+    round(2)
+
+  p <-  pcoa$points %>% as_tibble %>% 
+    cbind("City" = meta_sample$City) %>%
+    ggplot(aes(x=V1,y=V2, color=City)) +
+    geom_point(size=2) +
+    theme_minimal() +
+    xlab(paste("PCoA1 (~",varExplained_aitc[1],"%)", sep="")) +
+    ylab(paste("PCoA2 (~",varExplained_aitc[2],"%)", sep="")) +
+    theme(legend.position="none") 
+}
+```
+
+
+```{r}
+p.JSD.pseo <- plot.PCOA.pseo(pcoa.JSD, meta_sample, genus_rel_abund)
+p.CAN.pseo <- plot.PCOA.pseo(pcoa.CAN, meta_sample, genus_rel_abund)
+p.HEL.pseo <- plot.PCOA.pseo(pcoa.HEL, meta_sample, genus_rel_abund)
+p.AIT.pseo <- plot.PCOA.pseo(pcoa.aitc, meta_sample, genus_rel_abund)
+p.BRA.pseo <- plot.PCOA.pseo(pcoa.bray, meta_sample, genus_rel_abund)
+```
+
+```{r}
+p.JSD.city <- plot.PCOA.city(pcoa.JSD, meta_sample)
+p.CAN.city <- plot.PCOA.city(pcoa.CAN, meta_sample)
+p.HEL.city <- plot.PCOA.city(pcoa.HEL, meta_sample)
+p.AIT.city <- plot.PCOA.city(pcoa.aitc, meta_sample)
+p.BRA.city <- plot.PCOA.city(pcoa.bray, meta_sample)
+```
+
+
+```{r, fig.width=20, fig.height=4}
+p.pseo <- ggpubr::ggarrange(
+  p.JSD.pseo + ggtitle("jensen-shannon pseudomonadaceae"), 
+  p.CAN.pseo + ggtitle("canberra pseudomonadaceae"), 
+  p.HEL.pseo + ggtitle("hellinger pseudomonadaceae"),
+  p.BRA.pseo + ggtitle("bray-curtis pseudomonadaceae"),
+  p.AIT.pseo + ggtitle("aitchison pseudomonadaceae"), 
+  ncol = 5, legend = "none"
+)
+```
+
+```{r, fig.width=20, fig.height=4}
+p.city <- ggpubr::ggarrange(
+  p.JSD.city + ggtitle("jensen-shannon city"), 
+  p.CAN.city + ggtitle("canberra city"), 
+  p.HEL.city + ggtitle("hellinger city"),
+  p.BRA.city + ggtitle("bray-curtis city"),
+  p.AIT.city + ggtitle("aitchison city"), 
+  ncol = 5, common.legend = T, legend = "none"
+)
+```
+
+```{r, fig.width=20, fig.height=8}
+pall <- ggpubr::ggarrange(p.pseo, p.city, nrow = 2)
+pall
+```
+
+```{r}
+png("../Supplementary/EWADES_pcoa_more_metrics.png", width = 6000, height = 2400, res = 300)
+pall
+dev.off()
+```
 
