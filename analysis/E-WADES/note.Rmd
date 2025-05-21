@@ -12,8 +12,9 @@ abund <- read.table("../../data/E-WADES/depths_M3.tsv", header=T,
                     row.names=1, sep="\t", check.names=F)
 meta_sample <- read.table("../../data/E-WADES/meta_sample.tsv", header=T,
                     row.names=1, sep="\t", check.names=F) %>%
-  select(Site, Replicate_Bigger, Date) %>%
-  rownames_to_column("sample")
+  select(City, Replicate_Bigger, Date) %>%
+  mutate(City = str_replace_all(City, "Copenaghen", "Copenhagen")) %>%
+  rownames_to_column("sample") 
 taxon <-  read.table("../../data/E-WADES/taxonomy.tsv", header=T,
                     row.names=1, sep="\t", check.names=F)
 ```
@@ -66,7 +67,7 @@ data_composition <- genus_rel_abund %>%
   mutate(genus = if_else(genus %in% subset_genus, genus, "Other")) %>%
   left_join(meta_sample, by="sample") %>%
   filter(Replicate_Bigger) %>%
-  reframe(relative=sum(relative), .by=c("sample","genus","Site")) %>%
+  reframe(relative=sum(relative), .by=c("sample","genus","City")) %>%
   group_by(sample) %>%
   mutate(Pseudomonas_E_rel = sum(relative[genus == "Pseudomonas_E"])) %>%
   ungroup() %>%
@@ -88,7 +89,7 @@ p.composition <- data_composition %>%
   xlab("Samples") +
   ggnewscale::new_scale_fill() +
   geom_tile(data = data_composition,
-            aes(x = sample, y = -0.03, fill = Site), 
+            aes(x = sample, y = -0.03, fill = City), 
             height = 0.03, width = 1, inherit.aes = FALSE) 
 p.composition
 ```
@@ -114,21 +115,21 @@ pcoa.aitc <- stats::cmdscale(dist.aitc, eig=T, add=T)
 
 ```{r, warning=FALSE}
 centroids.pcoa.aitc <- pcoa.aitc$points %>% as_tibble %>%
-  cbind("Site"=meta_sample$Site) %>%
+  cbind("City"=meta_sample$City) %>%
   reframe(V1=mean(V1), 
           V2=mean(V2),
-          .by=Site)
+          .by=City)
 
 varExplained_aitc <- 100 * (pcoa.aitc$eig / sum(pcoa.aitc$eig)) %>%
   round(2)
 
 p.pcoa.aitc <-  pcoa.aitc$points %>% as_tibble %>% 
-  cbind("Site"=meta_sample$Site) %>%
-  ggplot(aes(x=V1,y=V2, color=Site)) +
+  cbind("City"=meta_sample$City) %>%
+  ggplot(aes(x=V1,y=V2, color=City)) +
   geom_point(size=3) +
   stat_ellipse() +
   geom_point(data=centroids.pcoa.aitc, shape=21, size=5, color="black",
-             aes(fill=Site)) +
+             aes(fill=City)) +
   theme_minimal() +
   xlab(paste("PCoA1 (~",varExplained_aitc[1],"%)", sep="")) +
   ylab(paste("PCoA2 (~",varExplained_aitc[2],"%)", sep="")) +
@@ -182,10 +183,6 @@ pall
 png(filename="E-WADES_pcoa_metrics.png", width=8000, height=6000, res=600)
 pall
 dev.off()
-
-pdf(file="E-WADES_pcoa_metrics.pdf", width=13.3, height=10)
-pall
-dev.off()
 ```
 
 ## Adonis 2
@@ -195,8 +192,8 @@ meta_sample <- genus_rel_abund %>% as_tibble(rownames = "sample") %>%
   select(sample, Pseudomonas_E) %>%
   right_join(meta_sample, by = "sample") %>%
   mutate(City = case_when(
-    str_detect(Site, "Copenaghen") ~ "Copenaghen",
-    TRUE ~ Site
+    str_detect(City, "Copenaghen") ~ "Copenaghen",
+    TRUE ~ City
   ))
 ```
 
@@ -224,8 +221,8 @@ umap.aitc <- uwot::umap(as.dist(dist.aitc), min_dist = .5)
 
 ```{r}
 p.umap.aitc <- umap.aitc %>% as_tibble %>% 
-  cbind("Site"=meta_sample$Site) %>%
-  ggplot(aes(x=V1,y=V2, fill=Site)) +
+  cbind("City"=meta_sample$City) %>%
+  ggplot(aes(x=V1,y=V2, fill=City)) +
   geom_point(size=4, shape = 21, alpha = .75) +
   theme_minimal() +
   xlab("UMAP-1") + ylab("UMAP-2") +
@@ -272,6 +269,8 @@ dev.off()
 ## Review
 
 ```{r}
+pcoa.euc <- dist(abund) %>%
+  stats::cmdscale(eig=T, add=T)
 pcoa.JSD <- philentropy::distance(abund, method = "jensen-shannon") %>%
   stats::cmdscale(eig=T, add=T)
 pcoa.CAN <- vegan::vegdist(abund, method = "canberra") %>%
@@ -297,7 +296,8 @@ plot.PCOA.pseo <- function(pcoa, meta_sample, genus_abun){
         low = "#2C3E50",  
         high = color_genus["Pseudomonas_E"]  # Same color associated to Pseudomonas_E genus
       ) +
-    theme(legend.position="none") 
+    theme(legend.position="none") +
+    theme(title = element_text(size = 16))
 
   return(p)
 }
@@ -316,12 +316,14 @@ plot.PCOA.city <- function(pcoa, meta_sample){
     theme_minimal() +
     xlab(paste("PCoA1 (~",varExplained_aitc[1],"%)", sep="")) +
     ylab(paste("PCoA2 (~",varExplained_aitc[2],"%)", sep="")) +
-    theme(legend.position="none") 
+    theme(legend.position="none") +
+    theme(title = element_text(size = 16))
 }
 ```
 
 
 ```{r}
+p.euc.pseo <- plot.PCOA.pseo(pcoa.euc, meta_sample, genus_rel_abund)
 p.JSD.pseo <- plot.PCOA.pseo(pcoa.JSD, meta_sample, genus_rel_abund)
 p.CAN.pseo <- plot.PCOA.pseo(pcoa.CAN, meta_sample, genus_rel_abund)
 p.HEL.pseo <- plot.PCOA.pseo(pcoa.HEL, meta_sample, genus_rel_abund)
@@ -330,6 +332,7 @@ p.BRA.pseo <- plot.PCOA.pseo(pcoa.bray, meta_sample, genus_rel_abund)
 ```
 
 ```{r}
+p.euc.city <- plot.PCOA.city(pcoa.euc, meta_sample)
 p.JSD.city <- plot.PCOA.city(pcoa.JSD, meta_sample)
 p.CAN.city <- plot.PCOA.city(pcoa.CAN, meta_sample)
 p.HEL.city <- plot.PCOA.city(pcoa.HEL, meta_sample)
@@ -337,36 +340,55 @@ p.AIT.city <- plot.PCOA.city(pcoa.aitc, meta_sample)
 p.BRA.city <- plot.PCOA.city(pcoa.bray, meta_sample)
 ```
 
+```{r}
+spacer_title <- ggplot() + 
+  theme_void() +
+  ggtitle("E-WADES Pseudomonadaceae") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"))
+```
 
-```{r, fig.width=20, fig.height=4}
+```{r, fig.width=24, fig.height=4.5}
 p.pseo <- ggpubr::ggarrange(
-  p.JSD.pseo + ggtitle("jensen-shannon pseudomonadaceae"), 
-  p.CAN.pseo + ggtitle("canberra pseudomonadaceae"), 
-  p.HEL.pseo + ggtitle("hellinger pseudomonadaceae"),
-  p.BRA.pseo + ggtitle("bray-curtis pseudomonadaceae"),
-  p.AIT.pseo + ggtitle("aitchison pseudomonadaceae"), 
-  ncol = 5, legend = "none"
+  p.euc.pseo + ggtitle("Euclidian"),
+  p.JSD.pseo + ggtitle("Jensen-Shannon"), 
+  p.CAN.pseo + ggtitle("Canberra"), 
+  p.HEL.pseo + ggtitle("Hellinger"),
+  p.BRA.pseo + ggtitle("Bray-Curtis"),
+  p.AIT.pseo + ggtitle("Aitchison"), 
+  ncol = 6, legend = "none"
 )
+p.pseo <- ggpubr::ggarrange(spacer_title, p.pseo, nrow = 2, heights = c(.1, .9))
+p.pseo
 ```
 
-```{r, fig.width=20, fig.height=4}
+```{r}
+spacer_title <- ggplot() + 
+  theme_void() +
+  ggtitle("E-WADES City") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"))
+```
+
+```{r, fig.width=24, fig.height=4.5}
 p.city <- ggpubr::ggarrange(
-  p.JSD.city + ggtitle("jensen-shannon city"), 
-  p.CAN.city + ggtitle("canberra city"), 
-  p.HEL.city + ggtitle("hellinger city"),
-  p.BRA.city + ggtitle("bray-curtis city"),
-  p.AIT.city + ggtitle("aitchison city"), 
-  ncol = 5, common.legend = T, legend = "none"
+  p.euc.city + ggtitle("Euclidian"), 
+  p.JSD.city + ggtitle("Jensen-Shannon"), 
+  p.CAN.city + ggtitle("Canberra"), 
+  p.HEL.city + ggtitle("Hellinger"),
+  p.BRA.city + ggtitle("Bray-Curtis"),
+  p.AIT.city + ggtitle("Aitchison"), 
+  ncol = 6, common.legend = T, legend = "none"
 )
+p.city <- ggpubr::ggarrange(spacer_title, p.city, nrow = 2, heights = c(.1, .9))
+p.city
 ```
 
-```{r, fig.width=20, fig.height=8}
+```{r, fig.width=24, fig.height=9}
 pall <- ggpubr::ggarrange(p.pseo, p.city, nrow = 2)
 pall
 ```
 
 ```{r}
-png("../Supplementary/EWADES_pcoa_more_metrics.png", width = 6000, height = 2400, res = 300)
+png("../Supplementary/EWADES_pcoa_more_metrics.png", width = 2*7200, height = 2*2700, res = 2*300)
 pall
 dev.off()
 ```

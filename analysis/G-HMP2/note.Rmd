@@ -104,7 +104,7 @@ p.composition <- data_composition %>%
           axis.text.x=element_blank(),
           axis.ticks.x=element_blank()) +
   xlab("Samples") +
-  ylab("Genera Composition") +
+  ylab("Genus\nComposition") +
   guides(fill=guide_legend(ncol=5)) +
   theme(legend.text = ggtext::element_markdown()) +
   # Colored tile at bottom of each bar
@@ -218,10 +218,6 @@ pall
 png(filename="HMP2_pcoa_metrics.png", width=8000, height=6000, res=600)
 pall
 dev.off()
-
-pdf(file="HMP2_pcoa_metrics.pdf", width=13.3, height=10)
-pall
-dev.off()
 ```
 
 ## Adonis 2
@@ -314,6 +310,8 @@ dev.off()
 ## Other Metrics
 
 ```{r, message=FALSE}
+pcoa.euc <- dist(genus_rel_abund_filt) %>%
+  stats::cmdscale(eig=T, add=T)
 pcoa.JSD <- philentropy::distance(genus_rel_abund_filt, method = "jensen-shannon") %>%
   stats::cmdscale(eig=T, add=T)
 pcoa.CAN <- vegan::vegdist(genus_rel_abund_filt, method = "canberra") %>%
@@ -382,6 +380,7 @@ plot.PCOA.sub <- function(pcoa, meta_sample_filt, genus_rel_filt){
 
 
 ```{r}
+p.euc.ent <- plot.PCOA.ent(pcoa.euc, meta_sample_filt, genus_rel_abund_filt)
 p.JSD.ent <- plot.PCOA.ent(pcoa.JSD, meta_sample_filt, genus_rel_abund_filt)
 p.CAN.ent <- plot.PCOA.ent(pcoa.CAN, meta_sample_filt, genus_rel_abund_filt)
 p.HEL.ent <- plot.PCOA.ent(pcoa.HEL, meta_sample_filt, genus_rel_abund_filt)
@@ -390,6 +389,7 @@ p.BRA.ent <- plot.PCOA.ent(pcoa.bray, meta_sample_filt, genus_rel_abund_filt)
 ```
 
 ```{r}
+p.euc.sub <- plot.PCOA.sub(pcoa.euc, meta_sample_filt, genus_rel_abund_filt)
 p.JSD.sub <- plot.PCOA.sub(pcoa.JSD, meta_sample_filt, genus_rel_abund_filt)
 p.CAN.sub <- plot.PCOA.sub(pcoa.CAN, meta_sample_filt, genus_rel_abund_filt)
 p.HEL.sub <- plot.PCOA.sub(pcoa.HEL, meta_sample_filt, genus_rel_abund_filt)
@@ -397,36 +397,55 @@ p.AIT.sub <- plot.PCOA.sub(pcoa.aitc, meta_sample_filt, genus_rel_abund_filt)
 p.BRA.sub <- plot.PCOA.sub(pcoa.bray, meta_sample_filt, genus_rel_abund_filt)
 ```
 
+```{r}
+spacer_title <- ggplot() + 
+  theme_void() +
+  ggtitle("G-HMP2 Bacteroides/Prevotella") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"))
+```
 
-```{r, fig.width=20, fig.height=4}
+```{r, fig.width=24, fig.height=4.5}
 p.ent <- ggpubr::ggarrange(
-  p.JSD.ent + ggtitle("jensen-shannon bacteroides/prevotella"), 
-  p.CAN.ent + ggtitle("canberra bacteroides/prevotella"), 
-  p.HEL.ent + ggtitle("hellinger bacteroides/prevotella"),
-  p.BRA.ent + ggtitle("bray-curtis bacteroides/prevotella"),
-  p.AIT.ent + ggtitle("aitchison bacteroides/prevotella"), 
-  ncol = 5, legend = "none"
+  p.euc.ent + ggtitle("Euclidian") + theme(title = element_text(size = 16)),
+  p.JSD.ent + ggtitle("Jensen-Shannon") + theme(title = element_text(size = 16)), 
+  p.CAN.ent + ggtitle("Canberra") + theme(title = element_text(size = 16)), 
+  p.HEL.ent + ggtitle("Hellinger") + theme(title = element_text(size = 16)),
+  p.BRA.ent + ggtitle("Bray-Curtis") + theme(title = element_text(size = 16)),
+  p.AIT.ent + ggtitle("Aitchison") + theme(title = element_text(size = 16)), 
+  ncol = 6, legend = "none"
 )
+p.ent <- ggpubr::ggarrange(spacer_title, p.ent, nrow = 2, heights = c(.1, .9))
+p.ent
 ```
 
-```{r, fig.width=20, fig.height=4}
+```{r}
+spacer_title <- ggplot() + 
+  theme_void() +
+  ggtitle("G-HMP2 Subjects") +
+  theme(plot.title = element_text(hjust = 0.5, size = 20, face = "bold"))
+```
+
+```{r, fig.width=24, fig.height=4.5}
 p.sub <- ggpubr::ggarrange(
-  p.JSD.sub + ggtitle("jensen-shannon subjects"), 
-  p.CAN.sub + ggtitle("canberra subjects"), 
-  p.HEL.sub + ggtitle("hellinger subjects"),
-  p.BRA.sub + ggtitle("bray-curtis subjects"),
-  p.AIT.sub + ggtitle("aitchison subjects"), 
-  ncol = 5, common.legend = T, legend = "none"
+  p.euc.sub + ggtitle("Euclidian") + theme(title = element_text(size = 16)), 
+  p.JSD.sub + ggtitle("Jensen-Shannon") + theme(title = element_text(size = 16)), 
+  p.CAN.sub + ggtitle("Canberra") + theme(title = element_text(size = 16)), 
+  p.HEL.sub + ggtitle("Hellinger") + theme(title = element_text(size = 16)),
+  p.BRA.sub + ggtitle("Bray-Curtis") + theme(title = element_text(size = 16)),
+  p.AIT.sub + ggtitle("Aitchison") + theme(title = element_text(size = 16)), 
+  ncol = 6, common.legend = T, legend = "none"
 )
+p.sub <- ggpubr::ggarrange(spacer_title, p.sub, nrow = 2, heights = c(.1, .9))
+p.sub
 ```
 
-```{r, fig.width=20, fig.height=8}
+```{r, fig.width=24, fig.height=9}
 pall <- ggpubr::ggarrange(p.ent, p.sub, nrow = 2) + theme(legend.position = "none")
 pall
 ```
 
 ```{r}
-png("../Supplementary/HMP2_pcoa_more_metrics.png", width = 6000, height = 2400, res = 300)
+png("../Supplementary/HMP2_pcoa_more_metrics.png", width = 2*7200, height = 2*2700, res = 2*300)
 pall
 dev.off()
 ```

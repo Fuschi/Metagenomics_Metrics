@@ -17,20 +17,20 @@ EWADES_metrics <- rasterGrob(readPNG("EWADES_pcoa_more_metrics.png"), interpolat
 spacer <- ggplot() + theme_void()
 ```
 
-```{r, fig.width = 20, fig.height=17.6}
+```{r, fig.width = 24, fig.height=17.6}
 pall <- ggpubr::ggarrange(
   HMP2_metrics,
   spacer,
   EWADES_metrics,
   nrow = 3,
-  heights = c(1, 0.1, 1),
-  labels = c("G-HMP2", "", "E-WADES"), font.label = list(size = 18), label.y = 1.01
+  heights = c(1, 0.1, 1)
+  #labels = c("G-HMP2", "", "E-WADES"), font.label = list(size = 18), label.y = 1.01
 )
 pall
 ```
 
 ```{r}
-png(filename = "Sup1_more_metrics.png", width = 6000, height = 17.6*300, res = 300)
+png(filename = "Sup1_more_metrics.png", width = 2*7200, height = 2*17.6*300, res = 2*300)
 pall
 dev.off()
 ```
